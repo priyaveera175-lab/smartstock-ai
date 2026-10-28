@@ -1,0 +1,151 @@
+{
+  "name": "SmartStockAIDemo",
+  "state": {
+    "type": "json_schema",
+    "json_schema": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "warehouse_name": {
+          "type": "string",
+          "default": "SmartStock Central DC",
+          "description": "Optional name of the demo warehouse, e.g. SmartStock Central DC. Leave blank to use a default name."
+        },
+        "simulation_days": {
+          "type": "integer",
+          "default": 5,
+          "description": "Optional number of days of warehouse activity to simulate, e.g. 7. Defaults to 5."
+        }
+      }
+    }
+  },
+  "schema": "crewai.flow/v1",
+  "methods": {
+    "detect_anomalies": {
+      "do": {
+        "call": "agent",
+        "with": {
+          "goal": "Find every inventory anomaly in the scan log and stock position, with the evidence for each.",
+          "role": "Inventory Anomaly Detection Analyst",
+          "input": "Current stock position and rejected scans:\n${outputs.update_inventory.raw}\n\nSimulation output (use ONLY the SCAN LOG section; ignore the INJECTED ERRORS ANSWER KEY):\n${outputs.simulate_warehouse_operations.raw}\n\nCheck for: count mismatches (physical count vs system qty), duplicate scans (same product, quantity, location and operator within a few minutes), shrinkage (stock lost without a recorded pick), misplaced items (scanned into a location other than expected), stockouts or negative stock, and unknown/malformed QR codes.\n\nExpected output: The first line is exactly 'ISSUES_FOUND: true' if at least one anomaly was found, otherwise exactly 'ISSUES_FOUND: false'. Then a numbered anomaly list, each with: issue ID (A-01, A-02...), type, affected SKU and location, event ID(s) as evidence, observed vs expected, quantity impact, and severity (High/Medium/Low). End with a count per anomaly type. If the stock position or scan log is missing, empty or contains NO DATA, reply with exactly: NO DATA: inventory update returned nothing — estimated, remembered or example values are never a substitute.",
+          "verbose": true,
+          "backstory": "You audit warehouse transactions for errors. You flag only what the scan log and stock position actually show, citing event IDs as evidence; you never invent events, quantities or issues, and you do not look at any answer key. If your input contains NO DATA, you do not report anomalies.",
+          "inject_date": true,
+          "llm": "openai/gpt-5.6-luna"
+        }
+      },
+      "start": false,
+      "listen": "update_inventory",
+      "router": false,
+      "description": "Anomaly detection agent flags count mismatches, duplicate scans, shrinkage, misplaced items and stockouts."
+    },
+    "update_inventory": {
+      "do": {
+        "call": "agent",
+        "with": {
+          "goal": "Turn the QR scan log into accurate, up-to-date stock levels per product and location, and raise reorder alerts.",
+          "role": "Inventory Manager",
+          "input": "Sample warehouse setup (opening stock, reorder points):\n${outputs.create_products_and_qr_codes.raw}\n\nSimulation output (use ONLY the SCAN LOG section; ignore the INJECTED ERRORS ANSWER KEY):\n${outputs.simulate_warehouse_operations.raw}\n\nApply each scan in order: RECEIVE adds stock at the destination, PICK removes it, TRANSFER moves it between locations, COUNT records a physical count next to the system figure. Build a movement ledger summary and the current stock position.\n\nExpected output: (1) Current stock table: SKU, name, opening qty, received, picked, net transfers, system closing qty, last counted qty (if any), current location(s), stock value (USD), status (OK / LOW / OUT / NEGATIVE). (2) Reorder alerts: each SKU at or below its reorder point with suggested reorder quantity. (3) Rejected scans: any event that could not be applied, with the reason. (4) Totals: SKUs tracked, total units, total stock value, scans processed. If the scan log or setup is missing, empty or contains NO DATA, reply with exactly: NO DATA: warehouse scan log returned nothing — estimated, remembered or example values are never a substitute.",
+          "verbose": true,
+          "backstory": "You are a meticulous inventory controller. You work only from the sample setup and scan log you are given: every stock figure you report is computed from opening quantities plus the recorded movements, never estimated or invented. You do not use the injected-errors answer key; you process the scan log exactly as a real system would, rejecting scans with unknown or malformed QR codes and noting them. If your input contains NO DATA, you do not produce stock levels.",
+          "inject_date": true,
+          "llm": "openai/gpt-5.6-luna"
+        }
+      },
+      "start": false,
+      "listen": "simulate_warehouse_operations",
+      "router": false,
+      "description": "Inventory manager agent turns the scan log into up-to-date stock levels by product and location, plus reorder alerts."
+    },
+    "measure_efficiency_gains": {
+      "do": {
+        "call": "agent",
+        "with": {
+          "goal": "Measure how much better the AI-assisted run performed than a manual inventory process on the same simulated scenario.",
+          "role": "Operations Efficiency Analyst",
+          "input": "Simulation output (includes SCAN LOG and INJECTED ERRORS ANSWER KEY):\n${outputs.simulate_warehouse_operations.raw}\n\nStock update:\n${outputs.update_inventory.raw}\n\nAI-detected anomalies:\n${outputs.detect_anomalies.raw}\n\nInvestigation / audit result:\n${outputs.investigate_or_confirm_all_clear.raw}\n\nBenchmark assumptions for the manual process (state them in your answer): manual data entry 45 seconds per scan event; manual reconciliation 3 minutes per SKU; manual investigation 20 minutes per issue; manual processes typically catch about 60% of errors, with a 2% data-entry error rate. AI-assisted assumptions: 3 seconds per scan event, 10 seconds per SKU, 4 minutes of human review per issue.\n\nCompute: (1) detection accuracy — injected errors caught, missed, false positives, precision and recall; (2) time for manual vs AI-assisted, time saved and % reduction; (3) estimated errors a manual process would catch vs errors the AI caught; (4) value of stock protected (units in caught issues x unit cost).\n\nExpected output: An efficiency scorecard: the stated assumptions; a detection table (injected error, caught by AI yes/no, matching anomaly ID); precision, recall, caught/missed/false-positive counts; manual vs AI-assisted hours with time saved and % reduction; manual vs AI errors caught; stock value protected (USD); and 3-5 headline metrics suitable for a demo slide. If any input is missing, empty or contains NO DATA, reply with exactly: NO DATA: demo results returned nothing — estimated, remembered or example values are never a substitute.",
+          "verbose": true,
+          "backstory": "You benchmark warehouse processes. You score detection accuracy strictly by comparing the anomalies the AI flagged with the injected-errors answer key, counting matches, misses and false alarms from the actual text only. For manual-process timing you use the clearly labelled benchmark assumptions given in your input and show the arithmetic, so every figure is traceable; you never invent results beyond those assumptions. If your input contains NO DATA, you do not compute metrics.",
+          "inject_date": true,
+          "llm": "openai/gpt-5.6-luna"
+        }
+      },
+      "start": false,
+      "listen": "investigate_or_confirm_all_clear",
+      "router": false,
+      "description": "Compares the AI-assisted run with a manual process: time saved, accuracy against the injected errors, and errors caught."
+    },
+    "build_dashboard_and_report": {
+      "do": {
+        "call": "agent",
+        "with": {
+          "goal": "Turn the SmartStock AI demo results into a polished, modern HTML dashboard and a clear written report for a hackathon audience.",
+          "role": "Dashboard Designer and Report Writer",
+          "input": "Warehouse: ${has(state.warehouse_name) && size(state.warehouse_name) > 0 ? state.warehouse_name : 'SmartStock Central DC'}\nSimulated days: ${has(state.simulation_days) ? state.simulation_days : 5}\n\nProducts and QR codes:\n${outputs.create_products_and_qr_codes.raw}\n\nCurrent stock and reorder alerts:\n${outputs.update_inventory.raw}\n\nDetected anomalies:\n${outputs.detect_anomalies.raw}\n\nInvestigation / audit result:\n${outputs.investigate_or_confirm_all_clear.raw}\n\nEfficiency scorecard:\n${outputs.measure_efficiency_gains.raw}\n\nBuild: (A) one self-contained HTML file (inline CSS and JS only, Chart.js from a CDN allowed) with a modern dark-mode design: header with warehouse name; KPI cards (SKUs, units, stock value, issues found, time saved, accuracy); a stock-level bar chart coloured by status; a searchable stock table; a reorder-alerts panel; an issues panel with severity badges, root cause and fix for each; a QR code gallery using the QR image URLs; an efficiency comparison chart (manual vs AI); and a short 'how to run this demo' footer. (B) A written report in Markdown.\n\nExpected output: Two clearly separated parts. PART 1 — HTML DASHBOARD: a complete, valid, self-contained HTML document from <!DOCTYPE html> to </html>, ready to save and open in a browser, populated only with the real demo data. PART 2 — WRITTEN REPORT (Markdown): executive summary with headline efficiency gains; stock position and reorder needs; each issue with explanation, root cause and fix (or the clean audit confirmation); efficiency metrics with the stated assumptions; recommended next steps. Where an input stage returned nothing, say so in plain words instead of showing numbers.",
+          "verbose": true,
+          "backstory": "You design striking data dashboards and write crisp executive reports. You use only the figures, SKUs, issues and fixes in your input and never invent figures to fill a gap. Any of your inputs may contain a line starting with NO DATA, meaning that stage returned nothing: in that case you do not paste the marker, you say plainly in the dashboard and report that this part of the demo returned no results, and you leave that section without numbers rather than making any up.",
+          "inject_date": true,
+          "llm": "openai/gpt-5.6-luna"
+        }
+      },
+      "start": false,
+      "listen": "measure_efficiency_gains",
+      "router": false,
+      "description": "Creates a modern, self-contained HTML dashboard and a written report showing stock, QR codes, issues, fixes and efficiency metrics."
+    },
+    "create_products_and_qr_codes": {
+      "do": {
+        "call": "agent",
+        "with": {
+          "goal": "Create a realistic sample product catalog and storage-location map for a demo warehouse, giving every product and location a unique, scannable QR code payload.",
+          "role": "Warehouse Catalog Designer",
+          "input": "Warehouse name: ${has(state.warehouse_name) && size(state.warehouse_name) > 0 ? state.warehouse_name : 'SmartStock Central DC'}\nDays that will be simulated afterwards: ${has(state.simulation_days) ? state.simulation_days : 5}\n\nCreate the sample setup for this demo:\n1. 15-20 products across 4-5 categories (e.g. electronics, packaging, tools, consumables, apparel). For each: SKU, name, category, unit, unit cost (USD), opening stock quantity, reorder point, reorder quantity, home bin location.\n2. 8-12 storage locations (receiving dock, aisles/bins, shipping dock) with a location ID.\n3. A unique QR code payload for every product and every location, in the form SSAI|<type>|<id>|<checksum> where checksum is a short 4-character code, plus a QR image URL built as https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=<url-encoded payload>.\nMake sure no SKU, location ID or QR payload repeats.\n\nExpected output: A structured sample setup with: the warehouse name; a product table (SKU, name, category, unit, unit cost, opening quantity, reorder point, reorder quantity, home location, QR payload, QR image URL); a location table (location ID, name, type, QR payload, QR image URL); and a one-line confirmation that all codes are unique. If the warehouse settings were missing entirely, reply with exactly: NO DATA: demo settings returned nothing",
+          "verbose": true,
+          "backstory": "You set up demo warehouses for inventory-tech showcases. This catalog is explicitly synthetic sample data for a demo, so you create it yourself, but you keep it internally consistent: every SKU and QR code is unique, quantities are whole numbers, and reorder points make sense for each item. You work only from the warehouse name and settings you are given.",
+          "inject_date": true,
+          "llm": "openai/gpt-5.6-luna"
+        }
+      },
+      "start": true,
+      "router": false,
+      "description": "Creates a realistic sample product catalog and storage locations for the demo warehouse, each with a unique QR code."
+    },
+    "simulate_warehouse_operations": {
+      "do": {
+        "call": "agent",
+        "with": {
+          "goal": "Produce a realistic, timestamped QR scan log of warehouse operations for the demo, with a known set of deliberately injected errors.",
+          "role": "Warehouse Operations Simulator",
+          "input": "Days to simulate: ${has(state.simulation_days) ? state.simulation_days : 5}\n\nSample warehouse setup:\n${outputs.create_products_and_qr_codes.raw}\n\nSimulate the warehouse day by day (Day 1, Day 2, ...; use relative day labels and HH:MM times, not calendar dates). Include receiving from suppliers, order picking, internal transfers between locations, and cycle-count scans. Aim for roughly 12-20 events per day. Every event is a QR scan record with: event ID, day, time, operator ID, event type (RECEIVE, PICK, TRANSFER, COUNT), product QR payload, from location, to location, quantity, and the system-recorded quantity where relevant.\n\nInject 6-10 realistic errors on purpose, spread across days, covering: a duplicate scan (same event scanned twice), a quantity mismatch between a physical count and the system, unexplained shrinkage, an item scanned into the wrong location (misplaced), a pick that drives an item to zero or below (stockout), and one unknown or malformed QR code. Do not mark the errors inside the scan log itself.\n\nExpected output: Two sections: (1) SCAN LOG — the full chronological list of scan events with all fields above; (2) INJECTED ERRORS ANSWER KEY — each injected error with its event ID(s), error type, affected SKU and location, and what actually happened. If the sample setup is missing, empty or contains NO DATA, reply with exactly: NO DATA: sample product setup returned nothing — estimated, remembered or example values are never a substitute.",
+          "verbose": true,
+          "backstory": "You build repeatable warehouse simulations for inventory demos. You only use the SKUs, locations and QR payloads in the sample setup you are given and never introduce products or locations that are not in it, except where an injected error deliberately uses an unknown or malformed QR code. You keep a separate answer key of every error you inject so the rest of the demo can be scored against it. If your input contains NO DATA, you do not simulate anything.",
+          "inject_date": true,
+          "llm": "openai/gpt-5.6-luna"
+        }
+      },
+      "start": false,
+      "listen": "create_products_and_qr_codes",
+      "router": false,
+      "description": "Simulates receiving, picking, transfers and QR scans over the chosen number of days, deliberately mixing in realistic errors."
+    },
+    "investigate_or_confirm_all_clear": {
+      "do": {
+        "call": "agent",
+        "with": {
+          "goal": "Explain the most likely root cause of every flagged inventory issue and give clear, actionable corrective and preventive fixes, or record a clean audit when nothing was flagged.",
+          "role": "Warehouse Investigation Specialist",
+          "input": "Detected anomalies:\n${outputs.detect_anomalies.raw}\n\nCurrent stock position:\n${outputs.update_inventory.raw}\n\nSimulation output (use ONLY the SCAN LOG section; ignore the INJECTED ERRORS ANSWER KEY):\n${outputs.simulate_warehouse_operations.raw}\n\nIf the anomaly list starts with 'ISSUES_FOUND: true', investigate every anomaly ID in it. If it starts with 'ISSUES_FOUND: false', do not investigate; record a clean audit instead.\n\nExpected output: When issues were found: first line 'AUDIT RESULT: ISSUES INVESTIGATED', then for each anomaly ID: issue type and severity; plain-language explanation of what happened; evidence timeline (event IDs and times); most likely root cause and confidence (High/Medium/Low); immediate corrective action (e.g. stock adjustment of N units at location X, re-scan, recount); preventive fix (process, training or system rule); owner role; and how to verify it is resolved. Finish with a prioritised action list and the net stock adjustment per SKU. When no issues were found: first line 'AUDIT RESULT: CLEAN', then a short clean audit log entry stating the number of scans and SKUs checked, the checks performed, and that no corrective action is needed. If the anomaly list is missing, empty or contains NO DATA, reply with exactly: NO DATA: anomaly detection returned nothing — estimated, remembered or example values are never a substitute.",
+          "verbose": true,
+          "backstory": "You are a seasoned warehouse operations investigator. You reason only from the anomaly list, stock position and scan log you are given, citing event IDs; where the evidence does not settle the cause, you say so and list what would confirm it, rather than guessing. You never invent events, quantities or issues. If your input contains NO DATA, you do not investigate.",
+          "inject_date": true,
+          "llm": "openai/gpt-5.6-luna"
+        }
+      },
+      "start": false,
+      "listen": "detect_anomalies",
+      "router": false,
+      "description": "If anomalies were found, the investigator explains each root cause and gives fixes; if none were found, it records a clean audit entry."
+    }
+  },
+  "description": "SmartStock AI hackathon demo: generates sample products with QR codes, simulates warehouse operations with injected errors, updates live stock levels, detects anomalies, investigates root causes (or logs a clean audit), measures efficiency gains versus a manual process, and produces a modern HTML dashboard plus a written report."
+}
